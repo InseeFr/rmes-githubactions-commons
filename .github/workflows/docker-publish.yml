@@ -1,0 +1,134 @@
+name: Publish Docker image
+
+# Builds the image of the release that just fired the event, and pushes it under
+# the release tag. Shared by every RMéS project — see README.md.
+#
+# The two registries in use are covered by the same call: ghcr.io for the
+# prereleases (authenticated with GITHUB_TOKEN, hence the `packages: write`
+# permission the caller must grant) and Docker Hub for the final releases
+# (authenticated with DOCKERHUB_USERNAME / DOCKERHUB_TOKEN).
+#
+# The image is built from the source of the tag, since a `release` event checks
+# out `refs/tags/<tag>`. Nothing is consumed from a previous job: the Dockerfiles
+# build the application themselves. A caller that wants a quality gate before
+# publishing keeps its own job and makes this one `needs:` it.
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "Image name without registry or tag, e.g. inseefr/bauhaus"
+        type: string
+        required: true
+      registry:
+        description: "Registry to push to. Empty = Docker Hub"
+        type: string
+        required: false
+        default: ''
+      dockerfile:
+        description: "Dockerfile to build"
+        type: string
+        required: false
+        default: Dockerfile
+      context:
+        description: "Build context"
+        type: string
+        required: false
+        default: '.'
+      tag:
+        description: "Image tag. Empty = the tag of the release that fired the event"
+        type: string
+        required: false
+        default: ''
+      latest:
+        description: "Also push the image as :latest"
+        type: boolean
+        required: false
+        default: false
+      platforms:
+        description: "Platforms to build for, e.g. linux/amd64,linux/arm64. Empty = the runner's own. QEMU is only set up when this is set"
+        type: string
+        required: false
+        default: ''
+    secrets:
+      DOCKERHUB_USERNAME:
+        description: "Docker Hub account, when registry is Docker Hub"
+        required: false
+      DOCKERHUB_TOKEN:
+        description: "Docker Hub token, when registry is Docker Hub"
+        required: false
+    outputs:
+      image:
+        description: "Fully qualified image reference that was pushed"
+        value: ${{ jobs.docker.outputs.image }}
+
+jobs:
+  docker:
+    name: ${{ inputs.image }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.tags.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the release and compute the tags
+        id: tags
+        env:
+          IMAGE: ${{ inputs.image }}
+          REGISTRY: ${{ inputs.registry }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+          LATEST: ${{ inputs.latest }}
+          EVENT: ${{ github.event_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag to publish: this workflow expects a release event, or an explicit tag input"
+            exit 1
+          fi
+          # A final release carries a plain version. Refusing an -rcN here is not
+          # a per-project setting: it is what "final release" means, so no caller
+          # gets to opt out of it. A prerelease is left alone — that is where the
+          # -rcN tags belong — and a manual call passing `tag` is deliberate.
+          if [ "$EVENT" = "release" ] && [ "$PRERELEASE" != "true" ] \
+             && ! echo "$TAG" | grep -Eq '^v?[0-9]+[.][0-9]+[.][0-9]+$'; then
+            echo "::error::a final release must be tagged x.y.z, without an -rcN suffix, got '$TAG'"
+            exit 1
+          fi
+
+          image="${REGISTRY:+$REGISTRY/}$IMAGE"
+          tags="$image:$TAG"
+          if [ "$LATEST" = "true" ]; then
+            tags="$tags,$image:latest"
+          fi
+
+          echo "image=$image:$TAG" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Publishing \`$tags\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up QEMU
+        if: ${{ inputs.platforms != '' }}
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # One step for both registries: an empty `registry` means Docker Hub.
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry == 'ghcr.io' && github.repository_owner || secrets.DOCKERHUB_USERNAME }}
+          password: ${{ inputs.registry == 'ghcr.io' && secrets.GITHUB_TOKEN || secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          tags: ${{ steps.tags.outputs.tags }}

@@ -1,0 +1,259 @@
+name: Prepare release
+
+# Version bump, commit, tag and GitHub release, shared by every RMéS project.
+# A repository calls it from its own release.yml — see README.md.
+#
+# The tag is placed ON the bump commit. That is what guarantees that whatever is
+# built afterwards from that tag (a Docker image, an artifact) carries the
+# version the manifest declares, since the build reads it from the tree of the
+# tag.
+#
+# Everything here is ecosystem-agnostic except two things, which is the whole
+# point of the file: reading the current version from the manifest, and writing
+# the next one back. The ecosystem itself is deduced from the manifest that is
+# there — pom.xml or package.json — so a caller usually declares nothing at all.
+# Supporting gradle or poetry means one more branch in the detection and in each
+# of the two `case` blocks, and nothing else.
+
+on:
+  workflow_call:
+    inputs:
+      kind:
+        description: "prerelease or release"
+        type: string
+        required: true
+      version:
+        description: "Explicit version. Empty = next rc (prerelease), or -rc suffix dropped (release)"
+        type: string
+        required: false
+        default: ''
+      dry_run:
+        description: "Compute the version and stop there, pushing nothing"
+        type: boolean
+        required: false
+        default: false
+      ecosystem:
+        description: "maven or node. Empty = deduced from the manifest sitting next to the workflow's working directory"
+        type: string
+        required: false
+        default: ''
+      module:
+        description: "maven only: module carrying the application version (-pl). Empty = root pom"
+        type: string
+        required: false
+        default: ''
+      working-directory:
+        description: "Directory holding the manifest, when it is not the repository root"
+        type: string
+        required: false
+        default: '.'
+      release-branch:
+        description: "Branch carrying final releases; a prerelease is refused on it"
+        type: string
+        required: false
+        default: main
+      java-version:
+        description: "maven only: JDK running the maven commands"
+        type: string
+        required: false
+        default: '25'
+      java-distribution:
+        description: "maven only: JDK distribution"
+        type: string
+        required: false
+        default: corretto
+      versions-plugin:
+        description: "maven only: plugin coordinates used to set the version"
+        type: string
+        required: false
+        default: org.codehaus.mojo:versions-maven-plugin:2.19.1
+    secrets:
+      RELEASE_TOKEN:
+        description: >-
+          PAT used to create the release. Without it the release is created with
+          GITHUB_TOKEN, and GitHub then refuses to start the workflows that
+          listen to the `release` event.
+        required: false
+    outputs:
+      version:
+        description: "Version that was bumped, tagged and released"
+        value: ${{ jobs.release.outputs.version }}
+
+concurrency:
+  group: prepare-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: ${{ inputs.kind }} from ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      # Checked out first: `working-directory` may point inside the repository.
+      - uses: actions/checkout@v4
+
+      - name: Check the inputs and the branch
+        env:
+          KIND: ${{ inputs.kind }}
+          BRANCH: ${{ github.ref_name }}
+          RELEASE_BRANCH: ${{ inputs.release-branch }}
+        run: |
+          set -euo pipefail
+          case "$KIND" in
+            prerelease | release) ;;
+            *) echo "::error::kind must be prerelease or release, got '$KIND'"; exit 1 ;;
+          esac
+          if [ "$KIND" = "prerelease" ] && [ "$BRANCH" = "$RELEASE_BRANCH" ]; then
+            echo "::error::a prerelease is tagged on a release branch, not on $RELEASE_BRANCH"
+            exit 1
+          fi
+          if [ "$KIND" = "release" ] && [ "$BRANCH" != "$RELEASE_BRANCH" ]; then
+            echo "::error::a final release is tagged on $RELEASE_BRANCH (current branch: $BRANCH)"
+            exit 1
+          fi
+
+      - name: Detect the ecosystem
+        id: detect
+        env:
+          OVERRIDE: ${{ inputs.ecosystem }}
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            ecosystem="$OVERRIDE"
+            case "$ecosystem" in
+              maven | node) ;;
+              *) echo "::error::ecosystem must be maven or node, got '$ecosystem'"; exit 1 ;;
+            esac
+          elif [ -f pom.xml ] && [ -f package.json ]; then
+            # Refused rather than guessed: releasing the version of the wrong
+            # manifest is worse than one line of configuration.
+            echo "::error::both pom.xml and package.json sit in $WORKING_DIRECTORY: set the ecosystem input to maven or node"
+            exit 1
+          elif [ -f pom.xml ]; then
+            ecosystem=maven
+          elif [ -f package.json ]; then
+            ecosystem=node
+          else
+            echo "::error::neither pom.xml nor package.json in $WORKING_DIRECTORY: nothing to release there"
+            exit 1
+          fi
+          echo "ecosystem: $ecosystem"
+          echo "ecosystem=$ecosystem" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v5
+        if: ${{ steps.detect.outputs.ecosystem == 'maven' }}
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+          cache: maven
+
+      - name: Compute the version
+        id: version
+        env:
+          KIND: ${{ inputs.kind }}
+          ECOSYSTEM: ${{ steps.detect.outputs.ecosystem }}
+          BRANCH: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          MODULE: ${{ inputs.module }}
+        run: |
+          set -euo pipefail
+          if [ "$ECOSYSTEM" = "maven" ]; then
+            pl=()
+            if [ -n "$MODULE" ]; then
+              pl=(-pl "$MODULE")
+            fi
+            manifest="${MODULE:+$MODULE/}pom.xml"
+            current=$(./mvnw -q help:evaluate -Dexpression=project.version "${pl[@]}" -DforceStdout)
+          else
+            manifest=package.json
+            current=$(jq -r .version package.json)
+          fi
+
+          if [ -n "$INPUT_VERSION" ]; then
+            next="$INPUT_VERSION"
+          elif [ "$KIND" = "release" ]; then
+            next="${current%-rc*}"
+          elif [[ "$current" =~ ^(.+-rc)([0-9]+)$ ]]; then
+            next="${BASH_REMATCH[1]}$(( BASH_REMATCH[2] + 1 ))"
+          else
+            echo "::error::$current is not an -rcN version: pass the version to publish"
+            exit 1
+          fi
+
+          if [ "$next" = "$current" ]; then
+            echo "::error::$manifest is already at $current: pass the version to publish"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$next" >/dev/null 2>&1; then
+            echo "::error::tag $next already exists"
+            exit 1
+          fi
+
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "\`$current\` → \`$next\` (*$KIND*, branch \`$BRANCH\`)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bump, commit and tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          ECOSYSTEM: ${{ steps.detect.outputs.ecosystem }}
+          MODULE: ${{ inputs.module }}
+          VERSIONS_PLUGIN: ${{ inputs.versions-plugin }}
+          MANIFEST: ${{ steps.version.outputs.manifest }}
+          NEXT: ${{ steps.version.outputs.next }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          set -euo pipefail
+          if [ "$ECOSYSTEM" = "maven" ]; then
+            pl=()
+            if [ -n "$MODULE" ]; then
+              # -pl: only the application module's version is touched, not the parent's.
+              pl=(-pl "$MODULE")
+            fi
+            ./mvnw -q "$VERSIONS_PLUGIN:set" "${pl[@]}" \
+              -DnewVersion="$NEXT" -DgenerateBackupPoms=false
+          else
+            npm pkg set version="$NEXT"
+          fi
+          if git diff --quiet; then
+            echo "::error::the bump changed nothing in $MANIFEST"
+            exit 1
+          fi
+          # Commit attributed to whoever ran the workflow: the numeric id in the
+          # noreply address is what links it back to their GitHub account.
+          git config user.name "$ACTOR"
+          git config user.email "$ACTOR_ID+$ACTOR@users.noreply.github.com"
+          git commit -am "chore: $NEXT"
+          git tag "$NEXT"
+          # Tag pushed explicitly: `--follow-tags` skips lightweight tags.
+          git push origin "HEAD:refs/heads/$BRANCH"
+          git push origin "refs/tags/$NEXT"
+
+      - name: Create the GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          HAS_PAT: ${{ secrets.RELEASE_TOKEN != '' }}
+          NEXT: ${{ steps.version.outputs.next }}
+          BRANCH: ${{ github.ref_name }}
+          KIND: ${{ inputs.kind }}
+        run: |
+          set -euo pipefail
+          flags=(--target "$BRANCH" --title "$NEXT" --generate-notes)
+          if [ "$KIND" = "prerelease" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$NEXT" "${flags[@]}"
+
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::warning::release created with GITHUB_TOKEN: the workflows listening to the release event will NOT be triggered (GitHub never starts a workflow from an event produced by GITHUB_TOKEN). Add the RELEASE_TOKEN secret, or switch those workflows to workflow_call."
+          fi
