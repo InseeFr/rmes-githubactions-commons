@@ -1,0 +1,105 @@
+name: Quality front
+description: Installs a pnpm front-end application, runs its checks and builds it
+
+# The checks every RMéS front-end runs, shared by all of them — see README.md.
+#
+# A composite action, and not a reusable workflow like the other two bricks of this
+# repository, because it is called both as the body of a "Quality" job and as the
+# quality gate of a job that then chains into `docker-publish.yml`. A workflow
+# `uses:` cannot be inserted into an existing job, a composite action can.
+#
+# Every check is a command rather than a boolean: a project without `knip` passes an
+# empty string and the step disappears, a project whose tests are named otherwise
+# gives its own. The defaults are what the existing front-ends already run.
+#
+# The Sonar scan is deliberately left out: it is a single step, it only concerns the
+# "Quality" job — the publication gates do not want it — and it needs secrets that a
+# composite action only receives explicitly. It stays with the caller.
+
+inputs:
+  node-version:
+    description: "Node version running the checks"
+    required: false
+    default: "24"
+  pnpm-version:
+    description: "pnpm version. Empty = the one declared by packageManager in the manifest"
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory holding the application, when it is not the repository root"
+    required: false
+    default: "."
+  install-command:
+    description: "Dependency installation"
+    required: false
+    default: pnpm install
+  lint-command:
+    description: "Linter. Empty = skipped"
+    required: false
+    default: pnpm lint
+  typecheck-command:
+    description: "Type checker. Empty = skipped"
+    required: false
+    default: pnpm typecheck
+  knip-command:
+    description: "Dead-code check. Empty = skipped"
+    required: false
+    default: pnpm knip
+  test-command:
+    description: "Unit tests, coverage included when the project reports it. Empty = skipped"
+    required: false
+    default: pnpm test:coverage
+  build-command:
+    description: "Production build. Empty = skipped"
+    required: false
+    default: pnpm build
+
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: ${{ inputs.pnpm-version }}
+        package_json_file: ${{ inputs.working-directory }}/package.json
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+        cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+    - name: 🏗️ Installing Dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.install-command }}
+
+    - name: 🧪 Running the linter
+      if: ${{ inputs.lint-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.lint-command }}
+
+    - name: 🧪 Running TypeScript
+      if: ${{ inputs.typecheck-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.typecheck-command }}
+
+    - name: 🧪 Running Knip
+      if: ${{ inputs.knip-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.knip-command }}
+
+    - name: 🧪 Running unit tests
+      if: ${{ inputs.test-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.test-command }}
+
+    - name: 🧪 Building the application
+      if: ${{ inputs.build-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.build-command }}

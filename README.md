@@ -1,12 +1,17 @@
 # rmes-githubactions-commons
 
-Shared GitHub Actions workflows for the RMéS projects, so that the same release
-plumbing is not copied into every Java and JavaScript repository.
+Shared GitHub Actions workflows and actions for the RMéS projects, so that the
+same release and quality plumbing is not copied into every Java and JavaScript
+repository.
 
 | Workflow | What it does |
 | --- | --- |
 | [`prepare-release.yml`](.github/workflows/prepare-release.yml) | Bumps the version, commits, tags and creates the GitHub release, in one click from the calling repository's Actions tab. |
 | [`docker-publish.yml`](.github/workflows/docker-publish.yml) | Builds the image of the release that fired the event and pushes it under the release tag, on ghcr.io or Docker Hub. |
+
+| Action | What it does |
+| --- | --- |
+| [`quality-front`](.github/actions/quality-front/action.yml) | Installs a pnpm front-end, runs its linter, type checker, dead-code check and unit tests, then builds it. |
 
 ## prepare-release
 
@@ -146,7 +151,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name }}
-      - uses: ./.github/actions/generic-ci-app
+      - uses: InseeFr/rmes-githubactions-commons/.github/actions/quality-front@main
   docker:
     needs: build
     uses: InseeFr/rmes-githubactions-commons/.github/workflows/docker-publish.yml@main
@@ -173,6 +178,70 @@ Output: `image`, the fully qualified reference that was pushed.
   `contents: read`. A reusable workflow can only lower what it is given.
 - **`secrets: inherit`**, so that `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
   reach the login step when the target is Docker Hub.
+
+## quality-front
+
+The body of a front-end's quality job: pnpm, Node, install, then the checks the
+project declares and the production build. It is an **action**, not a reusable
+workflow, so that it can also sit inside a job that does something else
+afterwards — which is exactly what a publication gate does.
+
+```yaml
+name: Quality
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: InseeFr/rmes-githubactions-commons/.github/actions/quality-front@main
+      - name: SonarCloud Scan
+        uses: sonarsource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+```
+
+A project that names its scripts otherwise, or that has no `knip`, says so —
+an empty command drops the step:
+
+```yaml
+      - uses: InseeFr/rmes-githubactions-commons/.github/actions/quality-front@main
+        with:
+          node-version: '22'
+          pnpm-version: '10'
+          knip-command: ''
+          test-command: pnpm test --coverage --watch=false
+```
+
+### Inputs
+
+| Input | Required | Default | |
+| --- | --- | --- | --- |
+| `node-version` | no | `24` | |
+| `pnpm-version` | no | *empty* | Empty takes the version declared by `packageManager` in the manifest. |
+| `working-directory` | no | `.` | Directory holding the application, for a repository whose front is not at the root. |
+| `install-command` | no | `pnpm install` | |
+| `lint-command` | no | `pnpm lint` | Empty skips the step. |
+| `typecheck-command` | no | `pnpm typecheck` | Empty skips the step. |
+| `knip-command` | no | `pnpm knip` | Empty skips the step. |
+| `test-command` | no | `pnpm test:coverage` | Empty skips the step. |
+| `build-command` | no | `pnpm build` | Empty skips the step. |
+
+### What the caller must provide
+
+- **The checkout**, since an action starts inside the job that is already there.
+  A publication gate checks out the release tag; a quality job takes the default.
+- **The Sonar scan**, when it wants one. It stays with the caller: the
+  publication gates do not run it, and the token would have to be handed over
+  explicitly anyway.
+- **A pnpm lockfile** next to the manifest: it is what the Node cache keys on.
 
 ## Conventions
 
