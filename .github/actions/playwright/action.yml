@@ -154,7 +154,7 @@ runs:
         echo "Back-Office: \`$REPOSITORY@$ref\` ($origin)" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Checkout the Back-Office
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: ${{ steps.ref.outputs.repository }}
         ref: ${{ steps.ref.outputs.ref }}
@@ -162,9 +162,9 @@ runs:
 
     - name: Install pnpm
       if: ${{ inputs.app-install-command != '' }}
-      uses: pnpm/action-setup@v4
+      uses: pnpm/action-setup@v6
 
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
         cache: ${{ inputs.app-install-command != '' && 'pnpm' || '' }}
@@ -242,7 +242,7 @@ runs:
         VITE_API_BASE_HOST: ${{ inputs.api-url }}
       run: ${{ inputs.test-command }}
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       if: ${{ !cancelled() && inputs.report-name != '' }}
       with:
         name: ${{ inputs.report-name }}
