@@ -53,10 +53,31 @@ inputs:
     description: "Production build. Empty = skipped"
     required: false
     default: pnpm build
+  pr-title-check:
+    description: "Check that the pull request title follows Conventional Commits. 'false' to skip"
+    required: false
+    default: 'true'
+  pr-title-require-scope:
+    description: "Require a scope in the pull request title"
+    required: false
+    default: 'false'
+  github-token:
+    description: "Token reading the pull request"
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: composite
   steps:
+    # The checks shared with the back-ends. By its full name, not
+    # ./.github/actions/quality: inside a composite action a relative `uses:`
+    # resolves against the caller's workspace, not this repository.
+    - uses: InseeFr/rmes-githubactions-commons/.github/actions/quality@main
+      with:
+        pr-title-check: ${{ inputs.pr-title-check }}
+        pr-title-require-scope: ${{ inputs.pr-title-require-scope }}
+        github-token: ${{ inputs.github-token }}
+
     - name: Install pnpm
       uses: pnpm/action-setup@v6
       with:

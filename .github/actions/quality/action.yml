@@ -1,0 +1,40 @@
+name: Quality
+description: The checks shared by every RMéS project, front-end or back-end, whatever its stack
+
+# The checks that do not depend on the stack of the project, shared by all of them
+# — see README.md. It is not meant to be called on its own: `quality-front` and
+# `quality-back` start with it, then run the checks of their own stack. A check
+# added here reaches every project on its next run.
+#
+# Today: the title of the pull request follows Conventional Commits. It used to be
+# a separate `pr-name.yml` workflow in each repository.
+#
+# Every check here is skipped outside a pull request, so that the same job can
+# also serve as the quality gate of a release or a scheduled run.
+
+inputs:
+  pr-title-check:
+    description: "Check that the pull request title follows Conventional Commits. 'false' to skip"
+    required: false
+    default: 'true'
+  pr-title-require-scope:
+    description: "Require a scope in the pull request title, as in feat(concepts): …"
+    required: false
+    default: 'false'
+  github-token:
+    description: "Token reading the pull request"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: 🧪 Checking the pull request title
+      if: >-
+        ${{ inputs.pr-title-check == 'true'
+          && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') }}
+      uses: amannn/action-semantic-pull-request@v6
+      with:
+        requireScope: ${{ inputs.pr-title-require-scope }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}

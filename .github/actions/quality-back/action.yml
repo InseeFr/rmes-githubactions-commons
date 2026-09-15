@@ -1,0 +1,67 @@
+name: Quality back
+description: Runs the shared checks, then builds and tests a Maven back-end application
+
+# The checks every RMéS back-end runs, shared by all of them — see README.md.
+#
+# Mirror of `quality-front`: the checks shared by every project (`quality`) first,
+# then those of the stack. Not called by any repository yet: Bauhaus-Back-Office
+# still runs its own quality.yml, whose Sonar analysis goes through the Maven
+# plugin. It is ready for that migration, and nothing more.
+#
+# The Sonar analysis is left to the caller, as in `quality-front`: it needs a
+# secret, and the publication gates do not want it. A caller that runs it through
+# the Maven plugin rather than a separate step gives its own `verify-command`.
+
+inputs:
+  pr-title-check:
+    description: "Check that the pull request title follows Conventional Commits. 'false' to skip"
+    required: false
+    default: 'true'
+  pr-title-require-scope:
+    description: "Require a scope in the pull request title"
+    required: false
+    default: 'false'
+  github-token:
+    description: "Token reading the pull request"
+    required: false
+    default: ${{ github.token }}
+  java-version:
+    description: "JDK building the application"
+    required: false
+    default: '25'
+  java-distribution:
+    description: "JDK distribution"
+    required: false
+    default: corretto
+  working-directory:
+    description: "Directory holding the root pom, when it is not the repository root"
+    required: false
+    default: '.'
+  verify-command:
+    description: "Build and tests. Empty = skipped"
+    required: false
+    default: ./mvnw -B verify
+
+runs:
+  using: composite
+  steps:
+    # By its full name, not ./.github/actions/quality: inside a composite action a
+    # relative `uses:` resolves against the caller's workspace, not this repository.
+    - uses: InseeFr/rmes-githubactions-commons/.github/actions/quality@main
+      with:
+        pr-title-check: ${{ inputs.pr-title-check }}
+        pr-title-require-scope: ${{ inputs.pr-title-require-scope }}
+        github-token: ${{ inputs.github-token }}
+
+    - uses: actions/setup-java@v5
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: ${{ inputs.java-distribution }}
+        cache: maven
+        cache-dependency-path: ${{ inputs.working-directory }}/**/pom.xml
+
+    - name: 🧪 Building and testing the application
+      if: ${{ inputs.verify-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.verify-command }}
