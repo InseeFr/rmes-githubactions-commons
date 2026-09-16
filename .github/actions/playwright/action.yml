@@ -1,100 +1,46 @@
 name: Playwright
-description: Runs a front-end's Playwright suite against a Back-Office and a GraphDB started from the Back-Office repository
+description: Installs a pnpm front-end application and runs its Playwright suite
 
-# The end-to-end suite of a RMéS front-end, shared by all of them — see README.md.
+# The Playwright suite of a RMéS front-end, shared by all of them — see README.md.
 #
-# The stack spans two repositories. The front-end owns the tests, the fixture
-# loader and a compose override for CI; the Back-Office owns the compose file the
-# stack is started from, the image it builds, and most of the RDF fixtures. This
-# action checks the Back-Office out next to the front-end and runs the sequence
-# below, in that order:
+# The action knows nothing of the services the tests talk to. A front-end whose
+# suite needs a back-end (Bauhaus, against a Back-Office and a GraphDB) starts it
+# in its own workflow, in the steps before this action: the stack, its fixtures
+# and its startup order belong to that project, not to every front-end.
 #
-#   1. GraphDB and minio only;
-#   2. the fixture loader, which creates the RDF repositories;
-#   3. the Back-Office, whose startup checks fail for good when the
-#      repositories do not exist yet — hence after the fixtures, not with them;
-#   4. Playwright, which starts the front-end's dev server itself (webServer).
-#
-# Which Back-Office branch: by default the one carrying the same name as the
-# front-end branch that runs the tests, so that a change spanning both
-# repositories is tested as a whole, as long as both branches are named alike.
-# Most front-end branches have no counterpart (dependabot, small fixes): those
-# fall back to the Back-Office default branch, with a notice. An explicit
-# `back-office-ref` is taken as is, with no fallback — a typo must fail rather
-# than silently test against something else.
+# Playwright starts the dev server itself (webServer): the application is
+# installed at the root of the repository, the Playwright project may live in a
+# directory of its own, with its own manifest.
 
 inputs:
-  back-office-ref:
-    description: >-
-      Back-Office branch, tag or SHA. Empty = the branch named like the
-      front-end branch running the tests, or the Back-Office default branch
-      when there is none
-    required: false
-    default: ''
-  back-office-repository:
-    description: "Back-Office repository, owner/name. Empty = InseeFr/Bauhaus-Back-Office"
-    required: false
-    default: InseeFr/Bauhaus-Back-Office
-  back-office-path:
-    description: "Where the Back-Office is checked out, relative to the workspace"
-    required: false
-    default: bauhaus-back-office
-  compose-file:
-    description: "Compose file starting the stack, relative to the Back-Office checkout"
-    required: false
-    default: module-bauhaus-bo/compose.yaml
-  compose-override:
-    description: "Compose file layered on top for the Back-Office service, relative to the workspace. Empty = none"
-    required: false
-    default: e2e/compose.ci.yaml
-  back-office-service:
-    description: "Compose service of the Back-Office, started after the fixtures; every other service is started before"
-    required: false
-    default: bauhaus-back
   node-version:
     description: "Node version running the dev server and Playwright"
     required: false
     default: "24"
-  e2e-directory:
-    description: "Directory holding the Playwright project, relative to the workspace"
+  pnpm-version:
+    description: "pnpm version. Empty = the one declared by packageManager in the manifest"
     required: false
-    default: e2e
-  app-install-command:
-    description: "Installs the application the dev server runs, from the workspace root. Empty = skipped"
+    default: ""
+  install-command:
+    description: "Installs the application the dev server runs, from the workspace root. Empty = skipped, pnpm included"
     required: false
     default: pnpm install --frozen-lockfile
+  working-directory:
+    description: "Directory holding the Playwright project, relative to the workspace"
+    required: false
+    default: "."
   e2e-install-command:
-    description: "Installs the Playwright project, from e2e-directory"
+    description: "Installs the Playwright project, from working-directory, when it has its own manifest. Empty = skipped"
     required: false
-    default: npm ci
+    default: ""
   browsers:
-    description: "Browsers installed for Playwright, space separated"
+    description: "Browsers installed for Playwright, space separated. Empty = every browser Playwright installs by default"
     required: false
-    default: chromium
-  init-command:
-    description: "Loads the fixtures, from e2e-directory. BACK_OFFICE_HOME and GRAPHDB_URL are set. Empty = skipped"
-    required: false
-    default: ./playwright/db/init.sh
+    default: ""
   test-command:
-    description: "Runs the suite, from e2e-directory"
+    description: "Runs the suite, from working-directory"
     required: false
     default: npx playwright test
-  graphdb-url:
-    description: "GraphDB, as reached from the runner"
-    required: false
-    default: http://localhost:7200
-  api-url:
-    description: "Back-Office API, as reached from the runner and handed to the front-end as VITE_API_BASE_HOST"
-    required: false
-    default: http://localhost:8080/api
-  ready-path:
-    description: "Path under api-url answering 2xx once the Back-Office is up"
-    required: false
-    default: /init
-  startup-timeout:
-    description: "Seconds to wait for GraphDB, then for the Back-Office"
-    required: false
-    default: "300"
   report-name:
     description: "Name of the uploaded HTML report artifact. Empty = not uploaded"
     required: false
@@ -104,147 +50,51 @@ inputs:
     required: false
     default: "30"
 
-outputs:
-  back-office-repository:
-    description: "Back-Office repository the suite ran against"
-    value: ${{ steps.ref.outputs.repository }}
-  back-office-ref:
-    description: "Back-Office ref the suite ran against"
-    value: ${{ steps.ref.outputs.ref }}
-
 runs:
   using: composite
   steps:
-    - name: Resolve the Back-Office repository and branch
-      id: ref
-      shell: bash
-      env:
-        INPUT_REF: ${{ inputs.back-office-ref }}
-        # A caller forwarding a workflow_dispatch input passes an empty string on
-        # every other event, which would override the input default: empty means
-        # the default here too.
-        REPOSITORY: ${{ inputs.back-office-repository || 'InseeFr/Bauhaus-Back-Office' }}
-        # On a pull request github.ref_name is `<number>/merge`: the branch the
-        # developer named is head_ref.
-        FRONT_BRANCH: ${{ github.head_ref || github.ref_name }}
-        SERVER_URL: ${{ github.server_url }}
-      run: |
-        set -euo pipefail
-        if ! git ls-remote --exit-code "$SERVER_URL/$REPOSITORY.git" HEAD >/dev/null 2>&1; then
-          echo "::error::cannot reach $REPOSITORY: check the back-office-repository input (owner/name, public repository)"
-          exit 1
-        fi
-        echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
-        if [ -n "$INPUT_REF" ]; then
-          ref="$INPUT_REF"
-          origin="given explicitly"
-        elif git ls-remote --exit-code --heads "$SERVER_URL/$REPOSITORY.git" "refs/heads/$FRONT_BRANCH" >/dev/null; then
-          ref="$FRONT_BRANCH"
-          origin="same name as the front-end branch"
-        else
-          ref=$(git ls-remote --symref "$SERVER_URL/$REPOSITORY.git" HEAD | sed -n 's|^ref: refs/heads/\(.*\)\tHEAD$|\1|p')
-          if [ -z "$ref" ]; then
-            echo "::error::cannot read the default branch of $REPOSITORY"
-            exit 1
-          fi
-          origin="default branch, $REPOSITORY has no branch named $FRONT_BRANCH"
-          echo "::notice::no $FRONT_BRANCH branch on $REPOSITORY: testing against its default branch, $ref"
-        fi
-        echo "ref=$ref" >> "$GITHUB_OUTPUT"
-        echo "Back-Office: \`$REPOSITORY@$ref\` ($origin)" >> "$GITHUB_STEP_SUMMARY"
-
-    - name: Checkout the Back-Office
-      uses: actions/checkout@v7
-      with:
-        repository: ${{ steps.ref.outputs.repository }}
-        ref: ${{ steps.ref.outputs.ref }}
-        path: ${{ inputs.back-office-path }}
-
     - name: Install pnpm
-      if: ${{ inputs.app-install-command != '' }}
+      if: ${{ inputs.install-command != '' }}
       uses: pnpm/action-setup@v6
+      with:
+        version: ${{ inputs.pnpm-version }}
 
     - uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
-        cache: ${{ inputs.app-install-command != '' && 'pnpm' || '' }}
+        cache: ${{ inputs.install-command != '' && 'pnpm' || '' }}
 
-    # The dev server of the application is started by Playwright (webServer): its
-    # dependencies must be installed at the root of the repository.
-    - name: Install the application dependencies
-      if: ${{ inputs.app-install-command != '' }}
+    - name: 🏗️ Installing the application dependencies
+      if: ${{ inputs.install-command != '' }}
       shell: bash
-      run: ${{ inputs.app-install-command }}
+      run: ${{ inputs.install-command }}
 
-    - name: Install the e2e dependencies
+    - name: 🏗️ Installing the Playwright project dependencies
+      if: ${{ inputs.e2e-install-command != '' }}
       shell: bash
-      working-directory: ${{ inputs.e2e-directory }}
+      working-directory: ${{ inputs.working-directory }}
       run: ${{ inputs.e2e-install-command }}
 
-    - name: Install the Playwright browsers
+    - name: 🏗️ Installing the Playwright browsers
       shell: bash
-      working-directory: ${{ inputs.e2e-directory }}
+      working-directory: ${{ inputs.working-directory }}
       env:
         BROWSERS: ${{ inputs.browsers }}
       run: |
-        # Word splitting wanted: one argument per browser.
+        # Word splitting wanted: one argument per browser, none for the default set.
         # shellcheck disable=SC2086
         npx playwright install --with-deps $BROWSERS
 
-    - name: Start GraphDB
+    - name: 🧪 Running the Playwright tests
       shell: bash
-      env:
-        COMPOSE_FILE_PATH: ${{ inputs.back-office-path }}/${{ inputs.compose-file }}
-        BACK_SERVICE: ${{ inputs.back-office-service }}
-        GRAPHDB_URL: ${{ inputs.graphdb-url }}
-        TIMEOUT: ${{ inputs.startup-timeout }}
-      run: |
-        set -euo pipefail
-        mapfile -t services < <(docker compose -f "$COMPOSE_FILE_PATH" config --services | grep -vx "$BACK_SERVICE")
-        docker compose -f "$COMPOSE_FILE_PATH" up -d "${services[@]}"
-        timeout "$TIMEOUT" bash -c 'until curl -sf "$0/rest/repositories" > /dev/null; do sleep 5; done' "$GRAPHDB_URL"
-
-    - name: Load the test data
-      if: ${{ inputs.init-command != '' }}
-      shell: bash
-      working-directory: ${{ inputs.e2e-directory }}
-      env:
-        BACK_OFFICE_HOME: ${{ github.workspace }}/${{ inputs.back-office-path }}
-        GRAPHDB_URL: ${{ inputs.graphdb-url }}
-      run: ${{ inputs.init-command }}
-
-    - name: Start the Back-Office
-      shell: bash
-      env:
-        COMPOSE_FILE_PATH: ${{ inputs.back-office-path }}/${{ inputs.compose-file }}
-        COMPOSE_OVERRIDE: ${{ inputs.compose-override }}
-        BACK_SERVICE: ${{ inputs.back-office-service }}
-        READY_URL: ${{ inputs.api-url }}${{ inputs.ready-path }}
-        TIMEOUT: ${{ inputs.startup-timeout }}
-      run: |
-        set -euo pipefail
-        files=(-f "$COMPOSE_FILE_PATH")
-        if [ -n "$COMPOSE_OVERRIDE" ]; then
-          files+=(-f "$COMPOSE_OVERRIDE")
-        fi
-        docker compose "${files[@]}" up -d "$BACK_SERVICE"
-        if ! timeout "$TIMEOUT" bash -c 'until curl -sf "$0" > /dev/null; do sleep 5; done' "$READY_URL"; then
-          echo "::error::the Back-Office did not answer on $READY_URL within $TIMEOUT s"
-          docker compose "${files[@]}" logs "$BACK_SERVICE"
-          exit 1
-        fi
-
-    - name: Run the Playwright tests
-      shell: bash
-      working-directory: ${{ inputs.e2e-directory }}
+      working-directory: ${{ inputs.working-directory }}
       env:
         CI: "true"
-        VITE_API_BASE_HOST: ${{ inputs.api-url }}
       run: ${{ inputs.test-command }}
 
     - uses: actions/upload-artifact@v7
       if: ${{ !cancelled() && inputs.report-name != '' }}
       with:
         name: ${{ inputs.report-name }}
-        path: ${{ inputs.e2e-directory }}/playwright-report/
+        path: ${{ inputs.working-directory }}/playwright-report/
         retention-days: ${{ inputs.report-retention-days }}
