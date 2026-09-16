@@ -12,9 +12,10 @@ description: Installs a pnpm front-end application, runs its checks and builds i
 # empty string and the step disappears, a project whose tests are named otherwise
 # gives its own. The defaults are what the existing front-ends already run.
 #
-# The Sonar scan is deliberately left out: it is a single step, it only concerns the
-# "Quality" job — the publication gates do not want it — and it needs secrets that a
-# composite action only receives explicitly. It stays with the caller.
+# The Sonar scan and the React diagnostics are opt-in, and skipped by default: they
+# belong to a "Quality" job, not to the publication gates that chain this action
+# before pushing an image. A composite action receives no secret on its own, so the
+# caller hands the Sonar token over as an input; an empty one drops the scan.
 
 inputs:
   node-version:
@@ -53,6 +54,14 @@ inputs:
     description: "Production build. Empty = skipped"
     required: false
     default: pnpm build
+  react-doctor-command:
+    description: "React diagnostics and dependency audit. Empty = skipped"
+    required: false
+    default: ""
+  sonar-token:
+    description: "SonarQube Cloud token, read from the caller's secrets. Empty = no scan"
+    required: false
+    default: ""
   pr-title-check:
     description: "Check that the pull request title follows Conventional Commits. 'false' to skip"
     required: false
@@ -124,3 +133,22 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: ${{ inputs.build-command }}
+
+    - name: 🩺 Running React Doctor
+      if: ${{ inputs.react-doctor-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.react-doctor-command }}
+
+    # Last, so that it reports the coverage the test step has just written.
+    - name: 📊 SonarCloud Scan
+      # Dependabot's pull requests reach no repository secret: the token arrives
+      # empty and the scan would fail on it.
+      if: ${{ inputs.sonar-token != '' && github.actor != 'dependabot[bot]' }}
+      # sonarcloud-github-action is deprecated in favour of this one, which targets
+      # SonarQube Cloud through `sonar.host.url` (sonar-project.properties).
+      uses: SonarSource/sonarqube-scan-action@v8
+      with:
+        projectBaseDir: ${{ inputs.working-directory }}
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
