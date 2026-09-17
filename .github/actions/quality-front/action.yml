@@ -46,6 +46,14 @@ inputs:
     description: "Dead-code check. Empty = skipped"
     required: false
     default: pnpm knip
+  jscpd-command:
+    description: "Copy-paste detection. The threshold below is appended to it. Empty = skipped"
+    required: false
+    default: pnpm dlx jscpd@5 .
+  jscpd-threshold:
+    description: "Percentage of duplicated lines tolerated. Above it, the step fails"
+    required: false
+    default: '2'
   test-command:
     description: "Unit tests, coverage included when the project reports it. Empty = skipped"
     required: false
@@ -121,6 +129,16 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: ${{ inputs.knip-command }}
+
+    # `pnpm dlx` rather than a project script: the threshold is the same for every
+    # front-end, and a project without the dependency is covered too. A project
+    # carrying a `.jscpd.json` keeps it — it is read from the working directory,
+    # and only the threshold is imposed here.
+    - name: 🧪 Running jscpd
+      if: ${{ inputs.jscpd-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.jscpd-command }} --threshold ${{ inputs.jscpd-threshold }}
 
     - name: 🧪 Running unit tests
       if: ${{ inputs.test-command != '' }}
