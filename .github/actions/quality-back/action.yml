@@ -4,9 +4,8 @@ description: Runs the shared checks, then builds and tests a Maven back-end appl
 # The checks every RMéS back-end runs, shared by all of them — see README.md.
 #
 # Mirror of `quality-front`: the checks shared by every project (`quality`) first,
-# then those of the stack. Not called by any repository yet: Bauhaus-Back-Office
-# still runs its own quality.yml, whose Sonar analysis goes through the Maven
-# plugin. It is ready for that migration, and nothing more.
+# then those of the stack. Called by Bauhaus-Back-Office, whose quality.yml runs
+# its Sonar analysis through the Maven plugin, inside the build itself.
 #
 # The Sonar analysis is left to the caller: back-ends run it through the Maven
 # plugin, inside the build itself, so a caller that wants it gives its own
