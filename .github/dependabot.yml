@@ -1,0 +1,20 @@
+version: 2
+
+# Ce dépôt ne contient que des actions composites : ce sont leurs `uses:` qui
+# portent les dépendances tierces de toute la CI RMéS — checkout, setup-node,
+# pnpm/action-setup, docker/*, SonarSource, amannn. Une version qui vieillit ici
+# vieillit dans tous les projets appelants à la fois.
+#
+# Dependabot met à jour aussi bien un tag (`@v4`) qu'un SHA épinglé, en
+# réécrivant dans ce dernier cas le commentaire de version qui l'accompagne.
+updates:
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
