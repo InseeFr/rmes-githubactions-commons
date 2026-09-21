@@ -14,11 +14,11 @@ description: Installs a pnpm front-end application and runs its Playwright suite
 
 inputs:
   node-version:
-    description: "Node version running the dev server and Playwright"
+    description: "Node version running the dev server and Playwright. Empty = the shared version of setup-front"
     required: false
-    default: "24"
+    default: ""
   pnpm-version:
-    description: "pnpm version. Empty = the one declared by packageManager in the manifest"
+    description: "pnpm version. Empty = the shared version of setup-front"
     required: false
     default: ""
   install-command:
@@ -53,16 +53,17 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install pnpm
-      if: ${{ inputs.install-command != '' }}
-      uses: pnpm/action-setup@v6
-      with:
-        version: ${{ inputs.pnpm-version }}
-
-    - uses: actions/setup-node@v7
+    # Node and pnpm, whose versions are written down once, in `setup-front`. By
+    # its full name: inside a composite action a relative `uses:` resolves
+    # against the caller's workspace, not this repository.
+    #
+    # `pnpm: false` when the caller installs nothing — Node alone, and no store
+    # cache keyed on a lockfile that is never read.
+    - uses: InseeFr/rmes-githubactions-commons/.github/actions/setup-front@main
       with:
         node-version: ${{ inputs.node-version }}
-        cache: ${{ inputs.install-command != '' && 'pnpm' || '' }}
+        pnpm-version: ${{ inputs.pnpm-version }}
+        pnpm: ${{ inputs.install-command != '' }}
 
     - name: 🏗️ Installing the application dependencies
       if: ${{ inputs.install-command != '' }}

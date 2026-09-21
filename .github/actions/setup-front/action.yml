@@ -1,0 +1,78 @@
+name: Setup front
+description: Installs the Node and pnpm versions every RMéS front-end runs on
+
+# The single place where the Node and pnpm versions of the RMéS front-ends are
+# written down. `quality-front` and `playwright` start with it, and a job that
+# needs pnpm without either of them calls it directly — so that no workflow, and
+# no manifest, carries a version of its own.
+#
+# Node is the active LTS line, pnpm the current major. Majors on purpose: the
+# runner takes the latest patch by itself, and a bump here reaches every project
+# on its next run.
+#
+# `packageManager` in a manifest is deliberately NOT relied on: pnpm/action-setup
+# refuses to start when a version is given on both sides, and the version would
+# be back in each repository — which is what this action exists to avoid.
+
+inputs:
+  node-version:
+    description: "Node version. Empty = the shared version below"
+    required: false
+    default: ''
+  pnpm-version:
+    description: "pnpm version. Empty = the shared version below"
+    required: false
+    default: ''
+  working-directory:
+    description: "Directory holding the lockfile the Node cache keys on"
+    required: false
+    default: '.'
+  pnpm:
+    description: "Install pnpm and cache its store. 'false' sets Node up alone"
+    required: false
+    default: 'true'
+
+outputs:
+  node-version:
+    description: "Node version that was installed"
+    value: ${{ steps.versions.outputs.node }}
+  pnpm-version:
+    description: "pnpm version that was installed"
+    value: ${{ steps.versions.outputs.pnpm }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the shared versions
+      id: versions
+      shell: bash
+      env:
+        NODE_INPUT: ${{ inputs.node-version }}
+        PNPM_INPUT: ${{ inputs.pnpm-version }}
+        # ------------------------------------------------------------------
+        # The shared versions. This is the place to bump them, and the only one.
+        NODE_SHARED: '24'   # active LTS line — Krypton
+        PNPM_SHARED: '12'   # current major
+        # ------------------------------------------------------------------
+      run: |
+        set -euo pipefail
+        node="${NODE_INPUT:-$NODE_SHARED}"
+        pnpm="${PNPM_INPUT:-$PNPM_SHARED}"
+        echo "Node $node, pnpm $pnpm"
+        echo "node=$node" >> "$GITHUB_OUTPUT"
+        echo "pnpm=$pnpm" >> "$GITHUB_OUTPUT"
+
+    # No `package_json_file`: the version comes from here, and action-setup
+    # refuses to start when a manifest declares one too.
+    - name: Install pnpm
+      if: ${{ inputs.pnpm != 'false' }}
+      uses: pnpm/action-setup@v6
+      with:
+        version: ${{ steps.versions.outputs.pnpm }}
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ steps.versions.outputs.node }}
+        cache: ${{ inputs.pnpm != 'false' && 'pnpm' || '' }}
+        # Passed only with the cache: setup-node rejects a dependency path alone.
+        cache-dependency-path: ${{ inputs.pnpm != 'false' && format('{0}/pnpm-lock.yaml', inputs.working-directory) || '' }}
