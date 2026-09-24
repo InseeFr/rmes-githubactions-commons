@@ -83,6 +83,15 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+  hadolint-dockerfile:
+    description: "Dockerfile to lint with hadolint, relative to the repository root. Empty = skipped. Passed to `quality`"
+    required: false
+    default: ""
+  hadolint-failure-threshold:
+    description: "Lowest hadolint severity that fails the step. Passed to `quality`"
+    required: false
+    default: warning
+
 runs:
   using: composite
   steps:
@@ -94,6 +103,8 @@ runs:
         pr-title-check: ${{ inputs.pr-title-check }}
         pr-title-require-scope: ${{ inputs.pr-title-require-scope }}
         github-token: ${{ inputs.github-token }}
+        hadolint-dockerfile: ${{ inputs.hadolint-dockerfile }}
+        hadolint-failure-threshold: ${{ inputs.hadolint-failure-threshold }}
 
     # Node and pnpm, whose versions are written down once, in `setup-front`. By
     # its full name, for the same reason as `quality` above.

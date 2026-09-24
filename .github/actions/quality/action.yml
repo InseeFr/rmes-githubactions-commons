@@ -6,11 +6,13 @@ description: The checks shared by every RMéS project, front-end or back-end, wh
 # `quality-back` start with it, then run the checks of their own stack. A check
 # added here reaches every project on its next run.
 #
-# Today: the title of the pull request follows Conventional Commits. It used to be
-# a separate `pr-name.yml` workflow in each repository.
+# Today: the title of the pull request follows Conventional Commits, and the
+# Dockerfile passes hadolint. Each used to be a separate workflow in each
+# repository (`pr-name.yml`, `hadolint.yml`).
 #
-# Every check here is skipped outside a pull request, so that the same job can
-# also serve as the quality gate of a release or a scheduled run.
+# The title check is skipped outside a pull request, so that the same job can also
+# serve as the quality gate of a release or a scheduled run. Hadolint runs on every
+# event: a Dockerfile is as wrong on main as in a pull request.
 
 inputs:
   pr-title-check:
@@ -25,6 +27,14 @@ inputs:
     description: "Token reading the pull request"
     required: false
     default: ${{ github.token }}
+  hadolint-dockerfile:
+    description: "Dockerfile to lint with hadolint, relative to the repository root. Empty = skipped"
+    required: false
+    default: ""
+  hadolint-failure-threshold:
+    description: "Lowest hadolint severity that fails the step: error, warning, info, style"
+    required: false
+    default: warning
 
 runs:
   using: composite
@@ -38,3 +48,13 @@ runs:
         requireScope: ${{ inputs.pr-title-require-scope }}
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+
+    # Hadolint reads the `.hadolint.yaml` of the repository root (exceptions,
+    # trusted registries), but not its threshold: the action always passes its own
+    # flag, hence the input.
+    - name: 🐳 Linting the Dockerfile
+      if: ${{ inputs.hadolint-dockerfile != '' }}
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: ${{ inputs.hadolint-dockerfile }}
+        failure-threshold: ${{ inputs.hadolint-failure-threshold }}

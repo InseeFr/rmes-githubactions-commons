@@ -9,7 +9,7 @@ and quality plumbing is not copied into every Java and JavaScript repository.
 | [`docker-publish`](.github/actions/docker-publish/action.yml) | Builds the image of the release that fired the event and pushes it under the release tag, on ghcr.io or Docker Hub. |
 | [`quality-front`](.github/actions/quality-front/action.yml) | Installs a pnpm front-end, runs its linter, type checker, dead-code and copy-paste checks and unit tests, builds it, then scans it with Sonar when given a token. Starts with `quality`. |
 | [`quality-back`](.github/actions/quality-back/action.yml) | Same for a Maven back-end: `quality`, the copy-paste check, then the JDK and the build with its tests. Called by Bauhaus-Back-Office. |
-| [`quality`](.github/actions/quality/action.yml) | The checks shared by every project whatever its stack — today the Conventional Commits title of the pull request. Called by `quality-front` and `quality-back`, not directly. |
+| [`quality`](.github/actions/quality/action.yml) | The checks shared by every project whatever its stack — today the Conventional Commits title of the pull request and hadolint on the Dockerfile. Called by `quality-front` and `quality-back`, not directly. |
 | [`playwright`](.github/actions/playwright/action.yml) | Installs a pnpm front-end and runs its Playwright suite. The services the tests need are started by the caller. |
 | [`setup-front`](.github/actions/setup-front/action.yml) | Installs Node and pnpm — the single place where the versions every front-end runs on are written down. Called by `quality-front` and `playwright`, and directly by a job that needs pnpm without either. |
 
@@ -270,6 +270,8 @@ and wants no scan.
 | `pr-title-check` | no | `true` | Passed to `quality`. |
 | `pr-title-require-scope` | no | `false` | Passed to `quality`. |
 | `github-token` | no | `${{ github.token }}` | Passed to `quality`. |
+| `hadolint-dockerfile` | no | *empty* | Passed to `quality`. |
+| `hadolint-failure-threshold` | no | `warning` | Passed to `quality`. |
 
 ### What the caller must provide
 
@@ -289,9 +291,19 @@ the back-ends alike, without touching either.
 | Check | Runs when | Replaces |
 | --- | --- | --- |
 | Pull request title follows [Conventional Commits](https://www.conventionalcommits.org/) | the event is `pull_request` or `pull_request_target` | the `pr-name.yml` workflow each repository carried |
+| The Dockerfile passes [hadolint](https://github.com/hadolint/hadolint) | `hadolint-dockerfile` is set, on every event | the `hadolint.yml` workflow of Bauhaus and Impala |
 
-Outside a pull request every check is skipped, so the same job still serves as
-the gate of a release or a scheduled run.
+Outside a pull request the title check is skipped, so the same job still serves
+as the gate of a release or a scheduled run. Hadolint runs on every event: a
+Dockerfile is as wrong on `main` as in a pull request.
+
+Hadolint is opt-in: a project names its Dockerfile, which may not be called
+`Dockerfile` (`Dockerfile.bauhaus`). It reads the repository's `.hadolint.yaml` —
+the place for exceptions, each written down with its reason, and for trusted
+registries — but not the threshold in it: the action always passes its own flag,
+so the threshold is the `hadolint-failure-threshold` input. `warning` is the
+shared threshold; accepting a finding goes through an entry in `ignored:` of
+`.hadolint.yaml`, never through a lower threshold.
 
 The title is checked when the quality job runs, that is on `opened`,
 `synchronize` and `reopened`. The old `pr-name.yml` also listened to `edited`:
@@ -306,6 +318,8 @@ run on every title or description edit.
 | `pr-title-check` | no | `true` | `false` skips the title check. |
 | `pr-title-require-scope` | no | `false` | Require a scope: `feat(concepts): …`. |
 | `github-token` | no | `${{ github.token }}` | Reads the pull request. A job declaring `permissions:` must grant `pull-requests: read`. |
+| `hadolint-dockerfile` | no | *empty* | Dockerfile to lint, relative to the repository root. Empty skips the step. |
+| `hadolint-failure-threshold` | no | `warning` | Lowest severity that fails the step: `error`, `warning`, `info`, `style`. |
 
 ### Composing actions from this repository
 
@@ -321,7 +335,7 @@ The back-end counterpart of `quality-front`: `quality`, then the JDK with a
 Maven cache, then the build and its tests. Bauhaus-Back-Office calls it, and
 runs its Sonar analysis through the Maven plugin, inside the build itself. It is
 also the first caller to sit above the shared duplication threshold, and raises
-it for itself — `jscpd-threshold: '14'` — rather than dropping the check.
+it for itself — `jscpd-threshold: '15'` — rather than dropping the check.
 
 ```yaml
 jobs:
@@ -351,6 +365,8 @@ jobs:
 | `pr-title-check` | no | `true` | Passed to `quality`. |
 | `pr-title-require-scope` | no | `false` | Passed to `quality`. |
 | `github-token` | no | `${{ github.token }}` | Passed to `quality`. |
+| `hadolint-dockerfile` | no | *empty* | Passed to `quality`. |
+| `hadolint-failure-threshold` | no | `warning` | Passed to `quality`. |
 
 ### What the caller must provide
 
