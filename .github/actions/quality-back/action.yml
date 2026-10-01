@@ -81,7 +81,7 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: ${{ inputs.jscpd-command }} --threshold ${{ inputs.jscpd-threshold }}
 
-    - uses: actions/setup-java@v5
+    - uses: actions/setup-java@v6
       with:
         java-version: ${{ inputs.java-version }}
         distribution: ${{ inputs.java-distribution }}
