@@ -51,7 +51,7 @@ runs:
         PNPM_INPUT: ${{ inputs.pnpm-version }}
         # ------------------------------------------------------------------
         # The shared versions. This is the place to bump them, and the only one.
-        NODE_SHARED: '24'   # active LTS line — Krypton
+        NODE_SHARED: '26'   # active LTS line
         PNPM_SHARED: '12'   # current major
         # ------------------------------------------------------------------
       run: |

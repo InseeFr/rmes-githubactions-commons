@@ -54,7 +54,7 @@ runs:
     # flag, hence the input.
     - name: 🐳 Linting the Dockerfile
       if: ${{ inputs.hadolint-dockerfile != '' }}
-      uses: hadolint/hadolint-action@v3.1.0
+      uses: hadolint/hadolint-action@v3.5.0
       with:
         dockerfile: ${{ inputs.hadolint-dockerfile }}
         failure-threshold: ${{ inputs.hadolint-failure-threshold }}
