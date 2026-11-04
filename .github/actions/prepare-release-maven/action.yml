@@ -27,7 +27,7 @@ inputs:
     description: "prerelease or release"
     required: true
   version:
-    description: "Explicit version. Empty = next rc (prerelease), or -rc suffix dropped (release)"
+    description: "Explicit version. Empty = next rc (prerelease; <branch>-rc1 when the current one has no -rcN), or -rc suffix dropped (release)"
     required: false
     default: ''
   dry_run:

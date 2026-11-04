@@ -55,7 +55,7 @@ on:
         options: [prerelease, release]
         default: prerelease
       version:
-        description: "Explicit version. Empty = next rc (prerelease), or -rc suffix dropped (release)"
+        description: "Explicit version. Empty = next rc (prerelease; <branch>-rc1 when the current one has no -rcN), or -rc suffix dropped (release)"
         required: false
       dry_run:
         description: "Compute the version and stop there, pushing nothing"
@@ -103,7 +103,7 @@ and without the two Maven inputs:
 | Input | Required | Default | |
 | --- | --- | --- | --- |
 | `kind` | yes | | `prerelease` or `release`. |
-| `version` | no | *empty* | Explicit version. Empty computes the next one: `x.y.z-rcN` → `-rcN+1` for a prerelease, `x.y.z-rcN` → `x.y.z` for a release. |
+| `version` | no | *empty* | Explicit version. Empty computes the next one: `x.y.z-rcN` → `-rcN+1` for a prerelease, or `<branch>-rc1` when the current version carries no `-rcN` (first prerelease of a branch named after its version, e.g. `4.22.0` → `4.22.0-rc1`); `x.y.z-rcN` → `x.y.z` for a release. An explicit version always wins. |
 | `dry_run` | no | `false` | Compute and report the version in the job summary, push nothing. |
 | `module` | no | *empty* | Maven only. Module carrying the application version (`-pl`). Empty targets the root pom. |
 | `working-directory` | no | `.` | Directory holding the manifest (and `mvnw`), for a repository whose app is not at the root. |

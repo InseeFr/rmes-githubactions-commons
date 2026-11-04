@@ -16,7 +16,7 @@ inputs:
     description: "Version the manifest declares today"
     required: true
   version:
-    description: "Explicit version. Empty = next rc (prerelease), or -rc suffix dropped (release)"
+    description: "Explicit version. Empty = next rc (prerelease; <branch>-rc1 when the current one has no -rcN), or -rc suffix dropped (release)"
     required: false
     default: ''
   manifest:
@@ -67,8 +67,9 @@ runs:
         elif [[ "$CURRENT" =~ ^(.+-rc)([0-9]+)$ ]]; then
           next="${BASH_REMATCH[1]}$(( BASH_REMATCH[2] + 1 ))"
         else
-          echo "::error::$CURRENT is not an -rcN version: pass the version to publish"
-          exit 1
+          # First prerelease of a release branch: the branch is named after the
+          # version it prepares, so its first rc is that name suffixed -rc1.
+          next="$BRANCH-rc1"
         fi
 
         if [ "$next" = "$CURRENT" ]; then
