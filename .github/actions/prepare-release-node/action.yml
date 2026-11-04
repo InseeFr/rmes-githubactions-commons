@@ -1,0 +1,103 @@
+name: Prepare release (Node)
+description: Bumps the version of a Node project, commits, tags it and creates the GitHub release
+
+# Version bump, commit, tag and GitHub release of a Node project.
+# A repository calls it from its own release.yml — see README.md.
+#
+# The tag is placed ON the bump commit. That is what guarantees that whatever is
+# built afterwards from that tag (a Docker image, an artifact) carries the
+# version package.json declares, since the build reads it from the tree of the
+# tag.
+#
+# Only two things here are specific to the ecosystem: reading the current
+# version from the manifest, and writing the next one back. The rest is shared
+# with prepare-release-maven through two actions of this repository:
+# release-next-version (branch rules, -rcN arithmetic, existing tag) and
+# release-publish (commit, tag, push, GitHub release). They are called by their
+# full name: inside a composite action a relative `uses:` resolves against the
+# caller's workspace, not this repository.
+#
+# A composite action rather than a reusable workflow: the caller owns the job, so
+# it also owns its runner, its permissions, its concurrency group and its name —
+# all things a called workflow either hides or duplicates. The counterpart is
+# that secrets do not flow in on their own; `release-token` is an input like any
+# other.
+
+inputs:
+  kind:
+    description: "prerelease or release"
+    required: true
+  version:
+    description: "Explicit version. Empty = next rc (prerelease), or -rc suffix dropped (release)"
+    required: false
+    default: ''
+  dry_run:
+    description: "Compute the version and stop there, pushing nothing. 'true' to enable"
+    required: false
+    default: 'false'
+  working-directory:
+    description: "Directory holding package.json, when it is not the repository root"
+    required: false
+    default: '.'
+  release-branch:
+    description: "Branch carrying final releases; a prerelease is refused on it"
+    required: false
+    default: main
+  release-token:
+    description: >-
+      PAT used to create the release. Without it the release is created with
+      github-token, and GitHub then refuses to start the workflows that listen to
+      the `release` event.
+    required: false
+    default: ''
+  github-token:
+    description: "Token used to create the release when no PAT is given"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: "Version that was bumped, tagged and released"
+    value: ${{ steps.next.outputs.next }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read the current version
+      id: current
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+
+    - uses: InseeFr/rmes-githubactions-commons/.github/actions/release-next-version@main
+      id: next
+      with:
+        kind: ${{ inputs.kind }}
+        current: ${{ steps.current.outputs.version }}
+        version: ${{ inputs.version }}
+        manifest: package.json
+        release-branch: ${{ inputs.release-branch }}
+
+    - name: Write the next version
+      # An action input is always a string: `!inputs.dry_run` would read the
+      # non-empty string "false" as true and never run this step.
+      if: ${{ inputs.dry_run != 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        NEXT: ${{ steps.next.outputs.next }}
+      run: |
+        set -euo pipefail
+        npm pkg set version="$NEXT"
+
+    - uses: InseeFr/rmes-githubactions-commons/.github/actions/release-publish@main
+      if: ${{ inputs.dry_run != 'true' }}
+      with:
+        kind: ${{ inputs.kind }}
+        version: ${{ steps.next.outputs.next }}
+        manifest: package.json
+        working-directory: ${{ inputs.working-directory }}
+        release-token: ${{ inputs.release-token }}
+        github-token: ${{ inputs.github-token }}

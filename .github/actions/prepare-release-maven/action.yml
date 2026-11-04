@@ -1,0 +1,139 @@
+name: Prepare release (Maven)
+description: Bumps the version of a Maven project, commits, tags it and creates the GitHub release
+
+# Version bump, commit, tag and GitHub release of a Maven project.
+# A repository calls it from its own release.yml — see README.md.
+#
+# The tag is placed ON the bump commit. That is what guarantees that whatever is
+# built afterwards from that tag (a Docker image, an artifact) carries the
+# version the pom declares, since the build reads it from the tree of the tag.
+#
+# Only two things here are specific to the ecosystem: reading the current
+# version from the manifest, and writing the next one back. The rest is shared
+# with prepare-release-node through two actions of this repository:
+# release-next-version (branch rules, -rcN arithmetic, existing tag) and
+# release-publish (commit, tag, push, GitHub release). They are called by their
+# full name: inside a composite action a relative `uses:` resolves against the
+# caller's workspace, not this repository.
+#
+# A composite action rather than a reusable workflow: the caller owns the job, so
+# it also owns its runner, its permissions, its concurrency group and its name —
+# all things a called workflow either hides or duplicates. The counterpart is
+# that secrets do not flow in on their own; `release-token` is an input like any
+# other.
+
+inputs:
+  kind:
+    description: "prerelease or release"
+    required: true
+  version:
+    description: "Explicit version. Empty = next rc (prerelease), or -rc suffix dropped (release)"
+    required: false
+    default: ''
+  dry_run:
+    description: "Compute the version and stop there, pushing nothing. 'true' to enable"
+    required: false
+    default: 'false'
+  module:
+    description: "Module carrying the application version (-pl). Empty = root pom"
+    required: false
+    default: ''
+  working-directory:
+    description: "Directory holding the root pom.xml and mvnw, when it is not the repository root"
+    required: false
+    default: '.'
+  release-branch:
+    description: "Branch carrying final releases; a prerelease is refused on it"
+    required: false
+    default: main
+  java-version:
+    description: "JDK running the maven commands"
+    required: false
+    default: '25'
+  java-distribution:
+    description: "JDK distribution"
+    required: false
+    default: corretto
+  versions-plugin:
+    description: "Plugin coordinates used to set the version"
+    required: false
+    default: org.codehaus.mojo:versions-maven-plugin:2.19.1
+  release-token:
+    description: >-
+      PAT used to create the release. Without it the release is created with
+      github-token, and GitHub then refuses to start the workflows that listen to
+      the `release` event.
+    required: false
+    default: ''
+  github-token:
+    description: "Token used to create the release when no PAT is given"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: "Version that was bumped, tagged and released"
+    value: ${{ steps.next.outputs.next }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v5
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: ${{ inputs.java-distribution }}
+        cache: maven
+
+    - name: Read the current version
+      id: current
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MODULE: ${{ inputs.module }}
+      run: |
+        set -euo pipefail
+        pl=()
+        if [ -n "$MODULE" ]; then
+          pl=(-pl "$MODULE")
+        fi
+        echo "version=$(./mvnw -q help:evaluate -Dexpression=project.version "${pl[@]}" -DforceStdout)" >> "$GITHUB_OUTPUT"
+        echo "manifest=${MODULE:+$MODULE/}pom.xml" >> "$GITHUB_OUTPUT"
+
+    - uses: InseeFr/rmes-githubactions-commons/.github/actions/release-next-version@main
+      id: next
+      with:
+        kind: ${{ inputs.kind }}
+        current: ${{ steps.current.outputs.version }}
+        version: ${{ inputs.version }}
+        manifest: ${{ steps.current.outputs.manifest }}
+        release-branch: ${{ inputs.release-branch }}
+
+    - name: Write the next version
+      # An action input is always a string: `!inputs.dry_run` would read the
+      # non-empty string "false" as true and never run this step.
+      if: ${{ inputs.dry_run != 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MODULE: ${{ inputs.module }}
+        VERSIONS_PLUGIN: ${{ inputs.versions-plugin }}
+        NEXT: ${{ steps.next.outputs.next }}
+      run: |
+        set -euo pipefail
+        pl=()
+        if [ -n "$MODULE" ]; then
+          # -pl: only the application module's version is touched, not the parent's.
+          pl=(-pl "$MODULE")
+        fi
+        ./mvnw -q "$VERSIONS_PLUGIN:set" "${pl[@]}" \
+          -DnewVersion="$NEXT" -DgenerateBackupPoms=false
+
+    - uses: InseeFr/rmes-githubactions-commons/.github/actions/release-publish@main
+      if: ${{ inputs.dry_run != 'true' }}
+      with:
+        kind: ${{ inputs.kind }}
+        version: ${{ steps.next.outputs.next }}
+        manifest: ${{ steps.current.outputs.manifest }}
+        working-directory: ${{ inputs.working-directory }}
+        release-token: ${{ inputs.release-token }}
+        github-token: ${{ inputs.github-token }}

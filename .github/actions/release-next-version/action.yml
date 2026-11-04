@@ -1,0 +1,84 @@
+name: Release - next version
+description: Checks the branch rules and computes the version to release from the current one
+
+# Ecosystem-agnostic first half of prepare-release-maven and prepare-release-node:
+# the caller reads the current version from its manifest, this action decides
+# what comes next. Called by those two actions, not directly.
+#
+# Branch rules: a prerelease is refused on the release branch, a final release
+# is refused anywhere else.
+
+inputs:
+  kind:
+    description: "prerelease or release"
+    required: true
+  current:
+    description: "Version the manifest declares today"
+    required: true
+  version:
+    description: "Explicit version. Empty = next rc (prerelease), or -rc suffix dropped (release)"
+    required: false
+    default: ''
+  manifest:
+    description: "Manifest the version was read from, for the error messages"
+    required: true
+  release-branch:
+    description: "Branch carrying final releases; a prerelease is refused on it"
+    required: false
+    default: main
+
+outputs:
+  next:
+    description: "Version to bump, tag and release"
+    value: ${{ steps.next.outputs.next }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute the next version
+      id: next
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        CURRENT: ${{ inputs.current }}
+        INPUT_VERSION: ${{ inputs.version }}
+        MANIFEST: ${{ inputs.manifest }}
+        BRANCH: ${{ github.ref_name }}
+        RELEASE_BRANCH: ${{ inputs.release-branch }}
+      run: |
+        set -euo pipefail
+        case "$KIND" in
+          prerelease | release) ;;
+          *) echo "::error::kind must be prerelease or release, got '$KIND'"; exit 1 ;;
+        esac
+        if [ "$KIND" = "prerelease" ] && [ "$BRANCH" = "$RELEASE_BRANCH" ]; then
+          echo "::error::a prerelease is tagged on a release branch, not on $RELEASE_BRANCH"
+          exit 1
+        fi
+        if [ "$KIND" = "release" ] && [ "$BRANCH" != "$RELEASE_BRANCH" ]; then
+          echo "::error::a final release is tagged on $RELEASE_BRANCH (current branch: $BRANCH)"
+          exit 1
+        fi
+
+        if [ -n "$INPUT_VERSION" ]; then
+          next="$INPUT_VERSION"
+        elif [ "$KIND" = "release" ]; then
+          next="${CURRENT%-rc*}"
+        elif [[ "$CURRENT" =~ ^(.+-rc)([0-9]+)$ ]]; then
+          next="${BASH_REMATCH[1]}$(( BASH_REMATCH[2] + 1 ))"
+        else
+          echo "::error::$CURRENT is not an -rcN version: pass the version to publish"
+          exit 1
+        fi
+
+        if [ "$next" = "$CURRENT" ]; then
+          echo "::error::$MANIFEST is already at $CURRENT: pass the version to publish"
+          exit 1
+        fi
+        if git ls-remote --exit-code --tags origin "refs/tags/$next" >/dev/null 2>&1; then
+          echo "::error::tag $next already exists"
+          exit 1
+        fi
+
+        echo "next=$next" >> "$GITHUB_OUTPUT"
+        echo "\`$CURRENT\` → \`$next\` (*$KIND*, branch \`$BRANCH\`)" >> "$GITHUB_STEP_SUMMARY"

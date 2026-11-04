@@ -5,7 +5,11 @@ and quality plumbing is not copied into every Java and JavaScript repository.
 
 | Action | What it does |
 | --- | --- |
-| [`prepare-release`](.github/actions/prepare-release/action.yml) | Bumps the version, commits, tags and creates the GitHub release, in one click from the calling repository's Actions tab. |
+| [`prepare-release-maven`](.github/actions/prepare-release-maven/action.yml) | Bumps the version of a Maven project, commits, tags and creates the GitHub release, in one click from the calling repository's Actions tab. |
+| [`prepare-release-node`](.github/actions/prepare-release-node/action.yml) | Same for a Node project (`package.json`). |
+| [`prepare-release`](.github/actions/prepare-release/action.yml) | Kept for existing callers: deduces Maven or Node from the manifest and hands over to one of the two actions above. |
+| [`release-next-version`](.github/actions/release-next-version/action.yml) | The ecosystem-agnostic half of the two `prepare-release-*` actions before the bump: branch rules, `-rcN` arithmetic, existing tag. Called by them, not directly. |
+| [`release-publish`](.github/actions/release-publish/action.yml) | The half after the bump: commit, tag, push, GitHub release. Called by the two `prepare-release-*` actions, not directly. |
 | [`docker-publish`](.github/actions/docker-publish/action.yml) | Builds the image of the release that fired the event and pushes it under the release tag, on ghcr.io or Docker Hub. |
 | [`quality-front`](.github/actions/quality-front/action.yml) | Installs a pnpm front-end, runs its linter, type checker, dead-code and copy-paste checks and unit tests, builds it, then scans it with Sonar when given a token. Starts with `quality`. |
 | [`quality-back`](.github/actions/quality-back/action.yml) | Same for a Maven back-end: `quality`, the copy-paste check, then the JDK and the build with its tests. Called by Bauhaus-Back-Office. |
@@ -26,9 +30,16 @@ The caller keeps what is specific to it: the `workflow_dispatch` form (it is the
 only place a run can be started from), the checkout, and — when there is one —
 where its version lives.
 
-Maven or Node is **deduced from the manifest** found at the root — `pom.xml` or
-`package.json`. A repository holding both must say which one with the
-`ecosystem` input; the run is refused rather than guessed.
+One action per ecosystem: `prepare-release-maven` (version read with
+`help:evaluate`, written with `versions:set`) and `prepare-release-node` (`jq` /
+`npm pkg set`). That is all each of them holds: the rest is shared through
+`release-next-version` (branch rules, `-rcN` arithmetic, existing tag) and
+`release-publish` (commit, tag, push, release, warning on the missing PAT).
+
+The former `prepare-release` still works: it deduces the ecosystem from the
+manifest found in `working-directory` (`pom.xml` or `package.json`, or the
+`ecosystem` input when both are present) and calls the matching action with the
+inputs it was given. New callers use the ecosystem action directly.
 
 ### Maven
 
@@ -63,7 +74,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: InseeFr/rmes-githubactions-commons/.github/actions/prepare-release@main
+      - uses: InseeFr/rmes-githubactions-commons/.github/actions/prepare-release-maven@main
         with:
           kind: ${{ inputs.kind }}
           version: ${{ inputs.version }}
@@ -75,11 +86,11 @@ jobs:
 
 ### Node
 
-Same `on:` and `concurrency:` blocks, then the same job without the two Maven
-inputs:
+Same `on:` and `concurrency:` blocks, then the same job with the Node action
+and without the two Maven inputs:
 
 ```yaml
-      - uses: InseeFr/rmes-githubactions-commons/.github/actions/prepare-release@main
+      - uses: InseeFr/rmes-githubactions-commons/.github/actions/prepare-release-node@main
         with:
           kind: ${{ inputs.kind }}
           version: ${{ inputs.version }}
@@ -94,15 +105,18 @@ inputs:
 | `kind` | yes | | `prerelease` or `release`. |
 | `version` | no | *empty* | Explicit version. Empty computes the next one: `x.y.z-rcN` → `-rcN+1` for a prerelease, `x.y.z-rcN` → `x.y.z` for a release. |
 | `dry_run` | no | `false` | Compute and report the version in the job summary, push nothing. |
-| `ecosystem` | no | *detected* | `maven` (version read with `help:evaluate`, written with `versions:set`) or `node` (`jq` / `npm pkg set`). Only needed when both manifests are present. |
-| `module` | no | *empty* | Maven module carrying the application version (`-pl`). Empty targets the root pom. |
-| `working-directory` | no | `.` | Directory holding the manifest, for a repository whose app is not at the root. |
+| `module` | no | *empty* | Maven only. Module carrying the application version (`-pl`). Empty targets the root pom. |
+| `working-directory` | no | `.` | Directory holding the manifest (and `mvnw`), for a repository whose app is not at the root. |
 | `release-branch` | no | `main` | Branch carrying final releases. A `release` run is refused anywhere else, a `prerelease` run is refused on it. |
 | `java-version` | no | `25` | Maven only. |
 | `java-distribution` | no | `corretto` | Maven only. |
 | `versions-plugin` | no | `org.codehaus.mojo:versions-maven-plugin:2.19.1` | Maven only. |
 | `release-token` | no | *empty* | PAT creating the release. See below. |
 | `github-token` | no | `${{ github.token }}` | Used when no `release-token` is given. |
+
+Maven-only inputs exist only on `prepare-release-maven`. The legacy
+`prepare-release` accepts all of them plus `ecosystem` (`maven` or `node`, only
+needed when both manifests are present).
 
 Output: `version`, the version that was tagged.
 
@@ -498,7 +512,8 @@ Inputs are always strings, including the ones a caller writes as booleans: test
 them with `!= 'true'`, never with `!`, which reads the non-empty string `false`
 as true.
 
-Adding an ecosystem (gradle, poetry, cargo…) means adding one branch to the two
-`case` blocks of `prepare-release` — how to read the current version, how to
-write the next one — and one line to the table above. The rest of the action
-(branch rules, version arithmetic, tag, release, warnings) is shared as is.
+Adding an ecosystem (gradle, poetry, cargo…) means a new
+`prepare-release-<ecosystem>` with two steps of its own — read the current
+version, write the next one — around `release-next-version` and
+`release-publish`; then one line to the table above. Wiring it into the legacy `prepare-release` is not needed: only the
+existing callers go through it.
