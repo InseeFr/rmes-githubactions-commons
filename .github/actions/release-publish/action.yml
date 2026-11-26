@@ -62,8 +62,7 @@ runs:
         git commit -am "chore: $NEXT"
         git tag "$NEXT"
         # Tag pushed explicitly: `--follow-tags` skips lightweight tags.
-        git push origin "HEAD:refs/heads/$BRANCH"
-        git push origin "refs/tags/$NEXT"
+        git push --atomic origin "HEAD:refs/heads/$BRANCH" "refs/tags/$NEXT"
 
     - name: Create the GitHub release
       shell: bash
